@@ -568,14 +568,25 @@ class ManifestGenerator {
       userLines.push('');
     }
 
+    // A module preserved during an update (its source isn't available) has no
+    // answers collected this run, so its [modules.<code>] sections would be
+    // dropped on rewrite. Keep them verbatim from the prior files, which also
+    // keeps the team/user split, as is done for [agents.*] blocks below.
+    const priorTeamSections = await readModuleSections(teamPath);
+    const priorUserSections = await readModuleSections(userPath);
+
     // [modules.<code>] — split per module
     for (const moduleName of this.updatedModules) {
       if (moduleName === 'core') continue;
       const cfg = moduleConfigs[moduleName];
-      if (!cfg || Object.keys(cfg).length === 0) continue;
       // Use the module's code field from module.yaml as the TOML key so the
       // section is [modules.mdo] not [modules.MDO: Maxio DevOps Operations].
       const sectionKey = codeByModuleName[moduleName] || moduleName;
+      if (!cfg || Object.keys(cfg).length === 0) {
+        if (priorTeamSections.has(sectionKey)) teamLines.push(priorTeamSections.get(sectionKey), '');
+        if (priorUserSections.has(sectionKey)) userLines.push(priorUserSections.get(sectionKey), '');
+        continue;
+      }
       // Only filter out spread-from-core pollution when we actually know
       // this module's prompt schema. For external/marketplace modules whose
       // module.yaml isn't in the src tree, fall through as all-team so we
@@ -878,6 +889,35 @@ function extractAgentBlocks(tomlContent) {
     blocks.push({ code, module: moduleName, body: blockLines.join('\n') });
   }
   return blocks;
+}
+
+/**
+ * Read the [modules.<code>] sections of a previously-emitted config.toml or
+ * config.user.toml, using the same line scanner as extractAgentBlocks: each
+ * section runs from its header until the next `[` heading or EOF.
+ * @returns {Promise<Map<string, string>>} code → verbatim section text
+ */
+async function readModuleSections(tomlPath) {
+  const sections = new Map();
+  if (!(await fs.pathExists(tomlPath))) return sections;
+  const lines = (await fs.readFile(tomlPath, 'utf8')).split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const header = lines[i].match(/^\[modules\.([^\]]+)]\s*$/);
+    if (!header) {
+      i++;
+      continue;
+    }
+    const sectionLines = [lines[i]];
+    i++;
+    while (i < lines.length && !lines[i].startsWith('[')) {
+      sectionLines.push(lines[i]);
+      i++;
+    }
+    while (sectionLines.length > 1 && sectionLines.at(-1) === '') sectionLines.pop();
+    if (sectionLines.length > 1) sections.set(header[1], sectionLines.join('\n'));
+  }
+  return sections;
 }
 
 module.exports = { ManifestGenerator };

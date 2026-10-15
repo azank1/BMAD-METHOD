@@ -4397,6 +4397,59 @@ async function runTests() {
   console.log('');
 
   // ============================================================
+  // Test Suite 53: Preserved Module Answers
+  // ============================================================
+  console.log(`${colors.yellow}Test Suite 53: Preserved Module Answers${colors.reset}\n`);
+
+  {
+    // Scenario: an update preserves a module whose source isn't available, so
+    // no answers are collected for it. writeCentralConfig must keep its prior
+    // [modules.<code>] sections in both files instead of dropping them.
+    const tempBmadDir53 = await fs.mkdtemp(path.join(os.tmpdir(), 'bmad-module-preserve-'));
+
+    try {
+      await fs.writeFile(
+        path.join(tempBmadDir53, 'config.toml'),
+        [
+          '[modules.bmm]',
+          'planning_artifacts = "{project-root}/stale-planning"',
+          '',
+          '[modules.retained-mod]',
+          'reviewer = "nobody"',
+          'reports_dir = "docs/team-reports"',
+          '',
+        ].join('\n'),
+      );
+      await fs.writeFile(path.join(tempBmadDir53, 'config.user.toml'), ['[modules.retained-mod]', 'reviewer = "alice"', ''].join('\n'));
+
+      const generator53 = new ManifestGenerator();
+      generator53.updatedModules = ['core', 'bmm', 'retained-mod'];
+      await generator53.writeCentralConfig(tempBmadDir53, {
+        core: { project_name: 'demo' },
+        bmm: { planning_artifacts: '{project-root}/fresh-planning' },
+      });
+
+      const team53 = await fs.readFile(path.join(tempBmadDir53, 'config.toml'), 'utf8');
+      const user53 = await fs.readFile(path.join(tempBmadDir53, 'config.user.toml'), 'utf8');
+
+      assert(
+        team53.includes('[modules.retained-mod]\nreviewer = "nobody"\nreports_dir = "docs/team-reports"'),
+        'Preserved module keeps its team answers in config.toml',
+      );
+      assert(user53.includes('[modules.retained-mod]\nreviewer = "alice"'), 'Preserved module keeps its user answers in config.user.toml');
+      assert(!team53.includes('"alice"'), 'Preserved user answer stays out of config.toml');
+      assert(
+        team53.includes('planning_artifacts = "{project-root}/fresh-planning"') && !team53.includes('stale-planning'),
+        'Modules with answers this run are still written from those answers',
+      );
+    } finally {
+      await fs.remove(tempBmadDir53).catch(() => {});
+    }
+  }
+
+  console.log('');
+
+  // ============================================================
   // Summary
   // ============================================================
   console.log(`${colors.cyan}========================================`);
